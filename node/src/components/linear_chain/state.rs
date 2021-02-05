@@ -213,6 +213,14 @@ impl<I> LinearChainState<I> {
             "Received a signature from a validator that is not bonded."
         );
     }
+
+    pub(crate) fn handle_known_validator(&mut self, fs: Box<FinalitySignature>) {
+        // Unknown block but validator is bonded.
+        // We should finalize the same block eventually. Either in this or in the
+        // next era.
+        //
+        // No-op for now.
+    }
 }
 
 #[derive(Debug)]

@@ -296,10 +296,8 @@ where
                     effects
                 }
             }
-            Event::IsBonded(None, _, true) => {
-                // Unknown block but validator is bonded.
-                // We should finalize the same block eventually. Either in this or in the
-                // next era.
+            Event::IsBonded(None, fs, true) => {
+                self.handle_known_validator(fs);
                 Effects::new()
             }
             Event::IsBonded(Some(_), fs, false) | Event::IsBonded(None, fs, false) => {
