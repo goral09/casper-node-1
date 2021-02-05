@@ -178,6 +178,26 @@ impl<I> LinearChainState<I> {
         outcomes.push(LinearChainOutcome::StoreBlock(block, execution_results));
         outcomes
     }
+
+    pub(crate) fn handle_stored_fs_result(
+        &mut self,
+        fs: Box<FinalitySignature>,
+        maybe_signatures: Option<Box<BlockSignatures>>,
+    ) -> Option<LinearChainOutcome> {
+        if let Some(signatures) = &maybe_signatures {
+            if signatures.era_id != fs.era_id {
+                warn!(public_key=%fs.public_key, expected=%signatures.era_id, got=%fs.era_id,
+                    "finality signature with invalid era id.");
+                // TODO: Disconnect from the sender.
+                self.remove_from_pending_fs(&*fs);
+                return None;
+            }
+            // Populate cache so that next finality signatures don't have to read from the
+            // storage. If signature is already from cache then this will be a noop.
+            self.signature_cache.insert(*signatures.clone());
+        }
+        Some(LinearChainOutcome::IsBondedValidator(fs, maybe_signatures))
+    }
 }
 
 #[derive(Debug)]
@@ -187,4 +207,5 @@ pub(crate) enum LinearChainOutcome {
     StoreFinalitySignatures(BlockSignatures),
     NewFinalitySignature(Box<FinalitySignature>),
     StoreBlock(Box<Block>, HashMap<DeployHash, ExecutionResult>),
+    IsBondedValidator(Box<FinalitySignature>, Option<Box<BlockSignatures>>),
 }

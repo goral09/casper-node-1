@@ -105,12 +105,17 @@ where
                 let mut effects = Effects::new();
                 for outcome in outcomes {
                     match outcome {
-                        LinearChainOutcome::GetSignaturesFromStorage(block_hash) => {
-                            effects.extend(effect_builder.get_signatures_from_storage(block_hash).ignore())
-                        }
-                        LinearChainOutcome::StoredFinalitySignatures(_) => {}
+                        LinearChainOutcome::GetSignaturesFromStorage(block_hash) => effects.extend(
+                            effect_builder
+                                .get_signatures_from_storage(block_hash)
+                                .ignore(),
+                        ),
                         LinearChainOutcome::StoreFinalitySignatures(signatures) => {
-                            effects.extend(effect_builder.put_signatures_to_storage(signatures).ignore());
+                            effects.extend(
+                                effect_builder
+                                    .put_signatures_to_storage(signatures)
+                                    .ignore(),
+                            );
                         }
                         LinearChainOutcome::NewFinalitySignature(fs) => {
                             let message = Message::FinalitySignature(fs.clone());
@@ -118,12 +123,18 @@ where
                             effects.extend(effect_builder.announce_finality_signature(fs).ignore());
                         }
                         LinearChainOutcome::StoreBlock(block, execution_results) => {
-                            effects.extend(effect_builder.put_block_to_storage(block.clone()).event(
-                                move |_| Event::PutBlockResult {
-                                    block,
-                                    execution_results,
-                                },
-                            ));
+                            effects.extend(
+                                effect_builder.put_block_to_storage(block.clone()).event(
+                                    move |_| Event::PutBlockResult {
+                                        block,
+                                        execution_results,
+                                    },
+                                ),
+                            );
+                        }
+                        other => {
+                            warn!(outcome=?other, "unexpected outcome received");
+                            return Effects::new();
                         }
                     }
                 }
@@ -156,17 +167,22 @@ where
                 effects
             }
             Event::FinalitySignatureReceived(fs) => {
-                if let Some(outcome)= self.handle_finality_signature(fs.clone()) {
+                if let Some(outcome) = self.handle_finality_signature(fs.clone()) {
                     match outcome {
                         LinearChainOutcome::GetSignaturesFromStorage(block_hash) => effect_builder
-                        .get_signatures_from_storage(block_hash)
-                        .event(move |maybe_signatures| {
-                            let maybe_box_signatures = maybe_signatures.map(Box::new);
-                            Event::GetStoredFinalitySignaturesResult(fs, maybe_box_signatures)
-                        }),
-                        LinearChainOutcome::StoredFinalitySignatures(signatures) => effect_builder.immediately().event(move |_| {
-                            Event::GetStoredFinalitySignaturesResult(fs, Some(Box::new(signatures)))
-                        }),
+                            .get_signatures_from_storage(block_hash)
+                            .event(move |maybe_signatures| {
+                                let maybe_box_signatures = maybe_signatures.map(Box::new);
+                                Event::GetStoredFinalitySignaturesResult(fs, maybe_box_signatures)
+                            }),
+                        LinearChainOutcome::StoredFinalitySignatures(signatures) => {
+                            effect_builder.immediately().event(move |_| {
+                                Event::GetStoredFinalitySignaturesResult(
+                                    fs,
+                                    Some(Box::new(signatures)),
+                                )
+                            })
+                        }
                         other => {
                             warn!(outcome=?other, "unexpected outcome received");
                             Effects::new()
@@ -177,35 +193,37 @@ where
                 }
             }
             Event::GetStoredFinalitySignaturesResult(fs, maybe_signatures) => {
-                if let Some(signatures) = &maybe_signatures {
-                    if signatures.era_id != fs.era_id {
-                        warn!(public_key=%fs.public_key, expected=%signatures.era_id, got=%fs.era_id,
-                            "finality signature with invalid era id.");
-                        // TODO: Disconnect from the sender.
-                        self.remove_from_pending_fs(&*fs);
-                        return Effects::new();
-                    }
-                    // Populate cache so that next finality signatures don't have to read from the
-                    // storage. If signature is already from cache then this will be a noop.
-                    self.signature_cache.insert(*signatures.clone());
-                }
-                // Check if the validator is bonded in the era in which the block was created.
-                effect_builder
-                    .is_bonded_validator(fs.era_id, fs.public_key)
-                    .map(|is_bonded| {
-                        if is_bonded {
-                            Ok((maybe_signatures, fs, is_bonded))
-                        } else {
-                            Err((maybe_signatures, fs))
+                if let Some(outcome) = self.handle_stored_fs_result(fs, maybe_signatures) {
+                    match outcome {
+                        LinearChainOutcome::IsBondedValidator(fs, signatures) => {
+                            // Check if the validator is bonded in the era in which the block was
+                            // created.
+                            effect_builder
+                                .is_bonded_validator(fs.era_id, fs.public_key)
+                                .map(|is_bonded| {
+                                    if is_bonded {
+                                        Ok((signatures, fs, is_bonded))
+                                    } else {
+                                        Err((signatures, fs))
+                                    }
+                                })
+                                .result(
+                                    |(maybe_signatures, fs, is_bonded)| {
+                                        Event::IsBonded(maybe_signatures, fs, is_bonded)
+                                    },
+                                    |(maybe_signatures, fs)| {
+                                        Event::IsBondedFutureEra(maybe_signatures, fs)
+                                    },
+                                )
                         }
-                    })
+                        other => {
+                            warn!(outcome=?other, "unexpected outcome received");
+                            Effects::new()
+                        }
+                    }
+                } else {
+                    Effects::new()                }
             }
-            .result(
-                |(maybe_signatures, fs, is_bonded)| {
-                    Event::IsBonded(maybe_signatures, fs, is_bonded)
-                },
-                |(maybe_signatures, fs)| Event::IsBondedFutureEra(maybe_signatures, fs),
-            ),
             Event::IsBondedFutureEra(maybe_signatures, fs) => {
                 match self.latest_block.as_ref() {
                     // If we don't have any block yet, we cannot determine who is bonded or not.
