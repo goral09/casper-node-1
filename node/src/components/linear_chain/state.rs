@@ -145,4 +145,40 @@ impl<I> LinearChainState<I> {
         }
         self.remove_empty_entries();
     }
+
+    pub(crate) fn handle_finality_signature(
+        &mut self,
+        fs: Box<FinalitySignature>,
+    ) -> Option<LinearChainOutcome> {
+        let FinalitySignature {
+            block_hash,
+            public_key,
+            era_id,
+            ..
+        } = *fs;
+        if let Err(err) = fs.verify() {
+            warn!(%block_hash, %public_key, %err, "received invalid finality signature");
+            return None;
+        }
+        if self.has_finality_signature(&fs) {
+            debug!(block_hash=%fs.block_hash, public_key=%fs.public_key,
+                "finality signature already pending");
+            return None;
+        }
+        if self.signature_cache.known_signature(&fs) {
+            debug!(block_hash=%fs.block_hash, public_key=%fs.public_key,
+                "finality signature is already known");
+            return None;
+        }
+        self.add_pending_finality_signature(*fs);
+        match self.signature_cache.get(&block_hash, era_id) {
+            None => Some(LinearChainOutcome::GetSignaturesFromStorage(block_hash)),
+            Some(signatures) => Some(LinearChainOutcome::StoredFinalitySignatures(signatures)),
+        }
+    }
+}
+
+pub(crate) enum LinearChainOutcome {
+    GetSignaturesFromStorage(BlockHash),
+    StoredFinalitySignatures(BlockSignatures),
 }

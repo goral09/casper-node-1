@@ -26,7 +26,7 @@ mod signature_cache;
 pub mod state;
 pub use event::*;
 pub(crate) use signature_cache::SignatureCache;
-pub(crate) use state::LinearChainState;
+pub(crate) use state::{LinearChainOutcome, LinearChainState};
 
 impl<I, REv> Component<REv> for LinearChainState<I>
 where
@@ -149,37 +149,20 @@ where
                 effects
             }
             Event::FinalitySignatureReceived(fs) => {
-                let FinalitySignature {
-                    block_hash,
-                    public_key,
-                    era_id,
-                    ..
-                } = *fs;
-                if let Err(err) = fs.verify() {
-                    warn!(%block_hash, %public_key, %err, "received invalid finality signature");
-                    return Effects::new();
-                }
-                if self.has_finality_signature(&fs) {
-                    debug!(block_hash=%fs.block_hash, public_key=%fs.public_key,
-                        "finality signature already pending");
-                    return Effects::new();
-                }
-                if self.signature_cache.known_signature(&fs) {
-                    debug!(block_hash=%fs.block_hash, public_key=%fs.public_key,
-                        "finality signature is already known");
-                    return Effects::new();
-                }
-                self.add_pending_finality_signature(*fs.clone());
-                match self.signature_cache.get(&block_hash, era_id) {
-                    None => effect_builder
+                if let Some(outcome)= self.handle_finality_signature(fs.clone()) {
+                    match outcome {
+                        LinearChainOutcome::GetSignaturesFromStorage(block_hash) => effect_builder
                         .get_signatures_from_storage(block_hash)
                         .event(move |maybe_signatures| {
                             let maybe_box_signatures = maybe_signatures.map(Box::new);
                             Event::GetStoredFinalitySignaturesResult(fs, maybe_box_signatures)
                         }),
-                    Some(signatures) => effect_builder.immediately().event(move |_| {
-                        Event::GetStoredFinalitySignaturesResult(fs, Some(Box::new(signatures)))
-                    }),
+                        LinearChainOutcome::StoredFinalitySignatures(signatures) => effect_builder.immediately().event(move |_| {
+                            Event::GetStoredFinalitySignaturesResult(fs, Some(Box::new(signatures)))
+                        })
+                    }
+                } else {
+                    Effects::new()
                 }
             }
             Event::GetStoredFinalitySignaturesResult(fs, maybe_signatures) => {
