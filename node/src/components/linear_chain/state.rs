@@ -40,7 +40,7 @@ impl<I> LinearChainState<I> {
     }
 
     // Checks if we have already enqueued that finality signature.
-    pub(crate) fn has_finality_signature(&self, fs: &FinalitySignature) -> bool {
+    fn has_finality_signature(&self, fs: &FinalitySignature) -> bool {
         let creator = fs.public_key;
         let block_hash = fs.block_hash;
         self.pending_finality_signatures
@@ -49,14 +49,14 @@ impl<I> LinearChainState<I> {
     }
 
     /// Removes all entries for which there are no finality signatures.
-    pub(crate) fn remove_empty_entries(&mut self) {
+    fn remove_empty_entries(&mut self) {
         self.pending_finality_signatures
             .retain(|_, sigs| !sigs.is_empty());
     }
 
     /// Adds pending finality signatures to the block; returns events to announce and broadcast
     /// them, and the updated block.
-    pub(crate) fn collect_pending_finality_signatures(
+    fn collect_pending_finality_signatures(
         &mut self,
         block_hash: &BlockHash,
         block_era: EraId,
@@ -90,7 +90,7 @@ impl<I> LinearChainState<I> {
     }
 
     /// Adds finality signature to the collection of pending finality signatures.
-    pub(crate) fn add_pending_finality_signature(&mut self, fs: FinalitySignature) {
+    fn add_pending_finality_signature(&mut self, fs: FinalitySignature) {
         let FinalitySignature {
             block_hash,
             public_key,
@@ -114,7 +114,7 @@ impl<I> LinearChainState<I> {
     }
 
     /// Removes finality signature from the pending collection.
-    pub(crate) fn remove_from_pending_fs(&mut self, fs: &FinalitySignature) {
+    fn remove_from_pending_fs(&mut self, fs: &FinalitySignature) {
         let FinalitySignature {
             block_hash,
             era_id: _era_id,
