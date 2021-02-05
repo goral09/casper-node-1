@@ -42,6 +42,24 @@ pub(crate) struct LinearChain<I> {
     _marker: PhantomData<I>,
 }
 
+#[derive(Default)]
+struct NewFinalitySignatures(Vec<FinalitySignature>);
+
+impl NewFinalitySignatures {
+    fn add(&mut self, fs: FinalitySignature) {
+        self.0.push(fs);
+    }
+}
+
+impl IntoIterator for NewFinalitySignatures {
+    type Item = FinalitySignature;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 impl<I> LinearChain<I> {
     pub fn new() -> Self {
         LinearChain {
@@ -73,33 +91,24 @@ impl<I> LinearChain<I> {
 
     /// Adds pending finality signatures to the block; returns events to announce and broadcast
     /// them, and the updated block.
-    fn collect_pending_finality_signatures<REv>(
+    fn collect_pending_finality_signatures(
         &mut self,
         block_hash: &BlockHash,
         block_era: EraId,
-        effect_builder: EffectBuilder<REv>,
-    ) -> (BlockSignatures, Effects<Event<I>>)
-    where
-        REv: From<StorageRequest>
-            + From<ConsensusRequest>
-            + From<NetworkRequest<I, Message>>
-            + From<LinearChainAnnouncement>
-            + Send,
-        I: Display + Send + 'static,
-    {
-        let mut effects = Effects::new();
+    ) -> (BlockSignatures, NewFinalitySignatures) {
         let mut known_signatures = self
             .signature_cache
             .get_known_signatures(block_hash, block_era);
-        let pending_sigs = self
+        let new_signatures = self
             .pending_finality_signatures
             .values_mut()
             .filter_map(|sigs| sigs.remove(&block_hash).map(Box::new))
             .filter(|fs| !known_signatures.proofs.contains_key(&fs.public_key))
             .collect_vec();
         self.remove_empty_entries();
+        let mut new_fs = NewFinalitySignatures::default();
         // Add new signatures and send the updated block to storage.
-        for fs in pending_sigs {
+        for fs in new_signatures {
             if fs.era_id != block_era {
                 // finality signature was created with era id that doesn't match block's era.
                 // TODO: disconnect from the sender.
@@ -110,11 +119,9 @@ impl<I> LinearChain<I> {
                 continue;
             }
             known_signatures.insert_proof(fs.public_key, fs.signature);
-            let message = Message::FinalitySignature(fs.clone());
-            effects.extend(effect_builder.broadcast_message(message).ignore());
-            effects.extend(effect_builder.announce_finality_signature(fs).ignore());
+            new_fs.add(*fs);
         }
-        (known_signatures, effects)
+        (known_signatures, new_fs)
     }
 
     /// Adds finality signature to the collection of pending finality signatures.
@@ -230,11 +237,16 @@ where
                 block,
                 execution_results,
             } => {
-                let (signatures, mut effects) = self.collect_pending_finality_signatures(
+                let (signatures, new_fs) = self.collect_pending_finality_signatures(
                     block.hash(),
                     block.header().era_id(),
-                    effect_builder,
                 );
+                let mut effects = Effects::new();
+                for fs in new_fs {
+                    let message = Message::FinalitySignature(Box::new(fs.clone()));
+                    effects.extend(effect_builder.broadcast_message(message).ignore());
+                    effects.extend(effect_builder.announce_finality_signature(Box::new(fs)).ignore());
+                }
                 // Cache the signature as we expect more finality signatures to arrive soon.
                 self.signature_cache.insert(signatures);
                 effects.extend(effect_builder.put_block_to_storage(block.clone()).event(
