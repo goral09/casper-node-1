@@ -101,25 +101,32 @@ where
                 block,
                 execution_results,
             } => {
-                let (signatures, new_fs) = self.collect_pending_finality_signatures(
-                    block.hash(),
-                    block.header().era_id(),
-                );
-                self.signature_cache.insert(signatures.clone());
+                let outcomes = self.handle_linear_chain_block(block, execution_results);
                 let mut effects = Effects::new();
-                effects.extend(effect_builder.put_signatures_to_storage(signatures).ignore());
-                for fs in new_fs {
-                    let message = Message::FinalitySignature(Box::new(fs.clone()));
-                    effects.extend(effect_builder.broadcast_message(message).ignore());
-                    effects.extend(effect_builder.announce_finality_signature(Box::new(fs)).ignore());
+                for outcome in outcomes {
+                    match outcome {
+                        LinearChainOutcome::GetSignaturesFromStorage(block_hash) => {
+                            effects.extend(effect_builder.get_signatures_from_storage(block_hash).ignore())
+                        }
+                        LinearChainOutcome::StoredFinalitySignatures(_) => {}
+                        LinearChainOutcome::StoreFinalitySignatures(signatures) => {
+                            effects.extend(effect_builder.put_signatures_to_storage(signatures).ignore());
+                        }
+                        LinearChainOutcome::NewFinalitySignature(fs) => {
+                            let message = Message::FinalitySignature(fs.clone());
+                            effects.extend(effect_builder.broadcast_message(message).ignore());
+                            effects.extend(effect_builder.announce_finality_signature(fs).ignore());
+                        }
+                        LinearChainOutcome::StoreBlock(block, execution_results) => {
+                            effects.extend(effect_builder.put_block_to_storage(block.clone()).event(
+                                move |_| Event::PutBlockResult {
+                                    block,
+                                    execution_results,
+                                },
+                            ));
+                        }
+                    }
                 }
-                // Cache the signature as we expect more finality signatures to arrive soon.
-                effects.extend(effect_builder.put_block_to_storage(block.clone()).event(
-                    move |_| Event::PutBlockResult {
-                        block,
-                        execution_results,
-                    },
-                ));
                 effects
             }
             Event::PutBlockResult {
@@ -159,7 +166,11 @@ where
                         }),
                         LinearChainOutcome::StoredFinalitySignatures(signatures) => effect_builder.immediately().event(move |_| {
                             Event::GetStoredFinalitySignaturesResult(fs, Some(Box::new(signatures)))
-                        })
+                        }),
+                        other => {
+                            warn!(outcome=?other, "unexpected outcome received");
+                            Effects::new()
+                        }
                     }
                 } else {
                     Effects::new()

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, marker::PhantomData};
 
-use casper_types::PublicKey;
+use casper_types::{ExecutionResult, PublicKey};
 use datasize::DataSize;
 use itertools::Itertools;
 use tracing::{debug, warn};
@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 use super::SignatureCache;
 use crate::{
     components::consensus::EraId,
-    types::{Block, BlockHash, BlockSignatures, FinalitySignature},
+    types::{Block, BlockHash, BlockSignatures, DeployHash, FinalitySignature},
 };
 
 /// The maximum number of finality signatures from a single validator we keep in memory while
@@ -23,24 +23,6 @@ pub(crate) struct LinearChainState<I> {
     pending_finality_signatures: HashMap<PublicKey, HashMap<BlockHash, FinalitySignature>>,
     pub(crate) signature_cache: SignatureCache,
     _marker: PhantomData<I>,
-}
-
-#[derive(Default)]
-pub(crate) struct NewFinalitySignatures(Vec<FinalitySignature>);
-
-impl NewFinalitySignatures {
-    pub(crate) fn add(&mut self, fs: FinalitySignature) {
-        self.0.push(fs);
-    }
-}
-
-impl IntoIterator for NewFinalitySignatures {
-    type Item = FinalitySignature;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
 }
 
 impl<I> LinearChainState<I> {
@@ -78,7 +60,7 @@ impl<I> LinearChainState<I> {
         &mut self,
         block_hash: &BlockHash,
         block_era: EraId,
-    ) -> (BlockSignatures, NewFinalitySignatures) {
+    ) -> (BlockSignatures, Vec<FinalitySignature>) {
         let mut known_signatures = self
             .signature_cache
             .get_known_signatures(block_hash, block_era);
@@ -89,7 +71,7 @@ impl<I> LinearChainState<I> {
             .filter(|fs| !known_signatures.proofs.contains_key(&fs.public_key))
             .collect_vec();
         self.remove_empty_entries();
-        let mut new_fs = NewFinalitySignatures::default();
+        let mut new_fs = Vec::new();
         // Add new signatures and send the updated block to storage.
         for fs in new_signatures {
             if fs.era_id != block_era {
@@ -102,7 +84,7 @@ impl<I> LinearChainState<I> {
                 continue;
             }
             known_signatures.insert_proof(fs.public_key, fs.signature);
-            new_fs.add(*fs);
+            new_fs.push(*fs);
         }
         (known_signatures, new_fs)
     }
@@ -176,9 +158,33 @@ impl<I> LinearChainState<I> {
             Some(signatures) => Some(LinearChainOutcome::StoredFinalitySignatures(signatures)),
         }
     }
+
+    pub(crate) fn handle_linear_chain_block(
+        &mut self,
+        block: Box<Block>,
+        execution_results: HashMap<DeployHash, ExecutionResult>,
+    ) -> Vec<LinearChainOutcome> {
+        let (signatures, new_fs) =
+            self.collect_pending_finality_signatures(block.hash(), block.header().era_id());
+        // Cache the signature as we expect more finality signatures to arrive soon.
+        self.signature_cache.insert(signatures.clone());
+        let mut outcomes = Vec::new();
+        outcomes.push(LinearChainOutcome::StoreFinalitySignatures(signatures));
+        outcomes.extend(
+            new_fs
+                .iter()
+                .map(|fs| LinearChainOutcome::NewFinalitySignature(Box::new(fs.clone()))),
+        );
+        outcomes.push(LinearChainOutcome::StoreBlock(block, execution_results));
+        outcomes
+    }
 }
 
+#[derive(Debug)]
 pub(crate) enum LinearChainOutcome {
     GetSignaturesFromStorage(BlockHash),
     StoredFinalitySignatures(BlockSignatures),
+    StoreFinalitySignatures(BlockSignatures),
+    NewFinalitySignature(Box<FinalitySignature>),
+    StoreBlock(Box<Block>, HashMap<DeployHash, ExecutionResult>),
 }
