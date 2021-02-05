@@ -65,7 +65,7 @@ use crate::{
 };
 pub use config::Config;
 pub use error::Error;
-use linear_chain::LinearChain;
+use linear_chain::LinearChainState;
 use memory_metrics::MemoryMetrics;
 
 /// Top-level event for the reactor.
@@ -318,7 +318,7 @@ pub struct Reactor {
     block_proposer: BlockProposer,
     block_executor: BlockExecutor,
     proto_block_validator: BlockValidator<ProtoBlock, NodeId>,
-    linear_chain: LinearChain<NodeId>,
+    linear_chain: LinearChainState<NodeId>,
 
     // Non-components.
     #[data_size(skip)] // Never allocates heap data.
@@ -419,7 +419,7 @@ impl reactor::Reactor for Reactor {
         let block_executor = BlockExecutor::new(genesis_state_root_hash, registry.clone())
             .with_parent_map(latest_block);
         let (proto_block_validator, block_validator_effects) = BlockValidator::new(effect_builder);
-        let linear_chain = LinearChain::new();
+        let linear_chain = LinearChainState::new();
 
         effects.extend(reactor::wrap_effects(
             Event::ProtoBlockValidator,

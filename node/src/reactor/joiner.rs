@@ -334,7 +334,7 @@ pub struct Reactor {
     pub(super) block_validator: BlockValidator<BlockHeader, NodeId>,
     pub(super) deploy_fetcher: Fetcher<Deploy>,
     pub(super) block_executor: BlockExecutor,
-    pub(super) linear_chain: linear_chain::LinearChain<NodeId>,
+    pub(super) linear_chain: linear_chain::state::LinearChainState<NodeId>,
     pub(super) consensus: EraSupervisor<NodeId>,
     // Effects consensus component returned during creation.
     // In the `joining` phase we don't want to handle it,
@@ -462,7 +462,7 @@ impl reactor::Reactor for Reactor {
 
         let block_executor = BlockExecutor::new(genesis_state_root_hash, registry.clone());
 
-        let linear_chain = linear_chain::LinearChain::new();
+        let linear_chain = linear_chain::LinearChainState::new();
 
         let validator_weights: BTreeMap<PublicKey, U512> = chainspec_loader
             .chainspec()
