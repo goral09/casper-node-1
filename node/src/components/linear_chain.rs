@@ -52,7 +52,6 @@ impl<I> LinearChain<I> {
         }
     }
 
-    // TODO: Remove once we can return all linear chain blocks from persistent storage.
     pub fn latest_block(&self) -> &Option<Block> {
         &self.latest_block
     }
