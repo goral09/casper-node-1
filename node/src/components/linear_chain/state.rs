@@ -198,6 +198,21 @@ impl<I> LinearChainState<I> {
         }
         Some(LinearChainOutcome::IsBondedValidator(fs, maybe_signatures))
     }
+
+    pub(crate) fn handle_unknown_validator(&mut self, fs: Box<FinalitySignature>) {
+        self.remove_from_pending_fs(&fs);
+        // Unknown validator.
+        let FinalitySignature {
+            public_key,
+            block_hash,
+            ..
+        } = *fs;
+        warn!(
+            validator = %public_key,
+            %block_hash,
+            "Received a signature from a validator that is not bonded."
+        );
+    }
 }
 
 #[derive(Debug)]

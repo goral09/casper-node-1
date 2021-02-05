@@ -15,7 +15,7 @@ use crate::{
         EffectBuilder, EffectExt, EffectOptionExt, EffectResultExt, Effects,
     },
     protocol::Message,
-    types::{BlockByHeight, FinalitySignature},
+    types::BlockByHeight,
     NodeRng,
 };
 
@@ -222,7 +222,8 @@ where
                         }
                     }
                 } else {
-                    Effects::new()                }
+                    Effects::new()
+                }
             }
             Event::IsBondedFutureEra(maybe_signatures, fs) => {
                 match self.latest_block.as_ref() {
@@ -302,18 +303,7 @@ where
                 Effects::new()
             }
             Event::IsBonded(Some(_), fs, false) | Event::IsBonded(None, fs, false) => {
-                self.remove_from_pending_fs(&fs);
-                // Unknown validator.
-                let FinalitySignature {
-                    public_key,
-                    block_hash,
-                    ..
-                } = *fs;
-                warn!(
-                    validator = %public_key,
-                    %block_hash,
-                    "Received a signature from a validator that is not bonded."
-                );
+                self.handle_unknown_validator(fs);
                 // TODO: Disconnect from the sender.
                 Effects::new()
             }
