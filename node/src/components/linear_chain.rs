@@ -262,42 +262,38 @@ where
                     }
                 }
             }
-            Event::IsBonded(Some(mut signatures), fs, true) => {
-                // Known block and signature from a bonded validator.
-                // Check if we had already seen this signature before.
-                let signature_known = signatures
-                    .proofs
-                    .get(&fs.public_key)
-                    .iter()
-                    .any(|sig| *sig == &fs.signature);
-                // If new, gossip and store.
-                if signature_known {
-                    self.remove_from_pending_fs(&*fs);
-                    Effects::new()
-                } else {
-                    let message = Message::FinalitySignature(fs.clone());
-                    let mut effects = effect_builder.broadcast_message(message).ignore();
-                    effects.extend(
-                        effect_builder
-                            .announce_finality_signature(fs.clone())
-                            .ignore(),
-                    );
-                    signatures.insert_proof(fs.public_key, fs.signature);
-                    // Cache the results in case we receive the same finality signature before we
-                    // manage to store it in the database.
-                    self.signature_cache.insert(*signatures.clone());
-                    debug!(hash=%signatures.block_hash, "storing finality signatures");
-                    self.remove_from_pending_fs(&*fs);
-                    effects.extend(
-                        effect_builder
-                            .put_signatures_to_storage(*signatures)
-                            .ignore(),
-                    );
-                    effects
+            Event::IsBonded(Some(signatures), fs, true) => {
+                let outcomes = self.handle_known_validator(Some(signatures), fs);
+                let mut effects = Effects::new();
+                for outcome in outcomes {
+                    match outcome {
+                        LinearChainOutcome::NewFinalitySignature(fs) => {
+                            let message = Message::FinalitySignature(fs.clone());
+                            effects.extend(effect_builder.broadcast_message(message).ignore());
+                            effects.extend(
+                                effect_builder
+                                    .announce_finality_signature(fs.clone())
+                                    .ignore(),
+                            );
+                        }
+                        LinearChainOutcome::StoreFinalitySignatures(signatures) => {
+                            effects.extend(
+                                effect_builder
+                                    .put_signatures_to_storage(signatures)
+                                    .ignore(),
+                            );
+                        }
+                        other => {
+                            warn!(outcome=?other, "unexpected outcome received");
+                            return Effects::new();
+                        }
+                    }
                 }
+                effects
             }
             Event::IsBonded(None, fs, true) => {
-                self.handle_known_validator(fs);
+                // Unknown block but validator is bonded.
+                self.handle_known_validator(None, fs);
                 Effects::new()
             }
             Event::IsBonded(Some(_), fs, false) | Event::IsBonded(None, fs, false) => {

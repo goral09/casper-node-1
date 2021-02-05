@@ -214,12 +214,45 @@ impl<I> LinearChainState<I> {
         );
     }
 
-    pub(crate) fn handle_known_validator(&mut self, fs: Box<FinalitySignature>) {
-        // Unknown block but validator is bonded.
-        // We should finalize the same block eventually. Either in this or in the
-        // next era.
-        //
-        // No-op for now.
+    pub(crate) fn handle_known_validator(
+        &mut self,
+        maybe_signatures: Option<Box<BlockSignatures>>,
+        fs: Box<FinalitySignature>,
+    ) -> Vec<LinearChainOutcome> {
+        match maybe_signatures {
+            None => {
+                // We should finalize the same block eventually. Either in this or in the
+                // next era.
+                //
+                // No-op for now.
+                Vec::new()
+            }
+            Some(mut signatures) => {
+                // Known block and signature from a bonded validator.
+                // Check if we had already seen this signature before.
+                let signature_known = signatures
+                    .proofs
+                    .get(&fs.public_key)
+                    .iter()
+                    .any(|sig| *sig == &fs.signature);
+                // If new, gossip and store.
+                if signature_known {
+                    self.remove_from_pending_fs(&*fs);
+                    Vec::new()
+                } else {
+                    let mut outcomes = Vec::new();
+                    outcomes.push(LinearChainOutcome::NewFinalitySignature(fs.clone()));
+                    signatures.insert_proof(fs.public_key, fs.signature);
+                    // Cache the results in case we receive the same finality signature before we
+                    // manage to store it in the database.
+                    self.signature_cache.insert(*signatures.clone());
+                    debug!(hash=%signatures.block_hash, "storing finality signatures");
+                    self.remove_from_pending_fs(&*fs);
+                    outcomes.push(LinearChainOutcome::StoreFinalitySignatures(*signatures));
+                    outcomes
+                }
+            }
+        }
     }
 }
 
@@ -227,6 +260,7 @@ impl<I> LinearChainState<I> {
 pub(crate) enum LinearChainOutcome {
     GetSignaturesFromStorage(BlockHash),
     StoredFinalitySignatures(BlockSignatures),
+    // TODO: Rename
     StoreFinalitySignatures(BlockSignatures),
     NewFinalitySignature(Box<FinalitySignature>),
     StoreBlock(Box<Block>, HashMap<DeployHash, ExecutionResult>),
