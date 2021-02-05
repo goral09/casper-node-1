@@ -241,14 +241,15 @@ where
                     block.hash(),
                     block.header().era_id(),
                 );
+                self.signature_cache.insert(signatures.clone());
                 let mut effects = Effects::new();
+                effects.extend(effect_builder.put_signatures_to_storage(signatures).ignore());
                 for fs in new_fs {
                     let message = Message::FinalitySignature(Box::new(fs.clone()));
                     effects.extend(effect_builder.broadcast_message(message).ignore());
                     effects.extend(effect_builder.announce_finality_signature(Box::new(fs)).ignore());
                 }
                 // Cache the signature as we expect more finality signatures to arrive soon.
-                self.signature_cache.insert(signatures);
                 effects.extend(effect_builder.put_block_to_storage(block.clone()).event(
                     move |_| Event::PutBlockResult {
                         block,
