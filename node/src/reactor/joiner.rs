@@ -431,16 +431,17 @@ impl reactor::Reactor for Reactor {
 
         let effect_builder = EffectBuilder::new(event_queue);
 
-        let init_hash = config
-            .node
-            .trusted_hash
-            .or_else(|| chainspec_loader.highest_block_hash());
+        let init_hash = config.node.trusted_hash;
+
+        let last_known_block = chainspec_loader.highest_block_header().clone();
 
         match init_hash {
             None => {
                 let chainspec = chainspec_loader.chainspec();
                 let era_duration = chainspec.core_config.era_duration;
-                if Timestamp::now() > chainspec.network_config.timestamp + era_duration {
+                if Timestamp::now() > chainspec.network_config.timestamp + era_duration
+                    && last_known_block.is_none()
+                {
                     error!(
                         "Node started with no trusted hash after the expected end of \
                          the genesis era! Please specify a trusted hash and restart. \
@@ -501,6 +502,7 @@ impl reactor::Reactor for Reactor {
             init_hash,
             validator_weights.clone(),
             maybe_next_activation_point,
+            last_known_block,
         )?;
 
         // Used to decide whether era should be activated.

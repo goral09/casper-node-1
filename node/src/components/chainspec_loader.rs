@@ -52,7 +52,7 @@ use crate::{
     reactor::ReactorExit,
     types::{
         chainspec::{Error, ProtocolConfig, CHAINSPEC_NAME},
-        ActivationPoint, Block, BlockHash, Chainspec, ChainspecInfo, ExitCode,
+        ActivationPoint, Block, BlockHash, BlockHeader, Chainspec, ChainspecInfo, ExitCode,
     },
     utils::{self, Loadable},
     NodeRng,
@@ -168,7 +168,7 @@ pub struct ChainspecLoader {
     /// The initial state root hash for this session.
     starting_state_root_hash: Digest,
     next_upgrade: Option<NextUpgrade>,
-    highest_block_hash: Option<BlockHash>,
+    highest_block_header: Option<BlockHeader>,
 }
 
 impl ChainspecLoader {
@@ -260,7 +260,7 @@ impl ChainspecLoader {
             reactor_exit,
             starting_state_root_hash: Digest::default(),
             next_upgrade,
-            highest_block_hash: None,
+            highest_block_header: None,
         };
 
         (chainspec_loader, effects)
@@ -294,7 +294,11 @@ impl ChainspecLoader {
     }
 
     pub(crate) fn highest_block_hash(&self) -> Option<BlockHash> {
-        self.highest_block_hash
+        self.highest_block_header.as_ref().map(|bh| bh.hash())
+    }
+
+    pub(crate) fn highest_block_header(&self) -> &Option<BlockHeader> {
+        &self.highest_block_header
     }
 
     fn handle_initialize<REv>(
@@ -316,7 +320,7 @@ impl ChainspecLoader {
 
         let highest_block = match maybe_block {
             Some(block) => {
-                self.highest_block_hash = Some(*block.hash());
+                self.highest_block_header = Some(block.header().clone());
                 block
             }
             None => {

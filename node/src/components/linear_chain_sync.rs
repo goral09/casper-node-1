@@ -47,7 +47,9 @@ use super::{
 };
 use crate::{
     effect::{EffectBuilder, EffectExt, EffectOptionExt, Effects},
-    types::{ActivationPoint, Block, BlockByHeight, BlockHash, Chainspec, FinalizedBlock},
+    types::{
+        ActivationPoint, Block, BlockByHeight, BlockHash, BlockHeader, Chainspec, FinalizedBlock,
+    },
     NodeRng,
 };
 use event::BlockByHeightResult;
@@ -67,6 +69,7 @@ pub(crate) struct LinearChainSync<I> {
     /// When we download the switch block of an era immediately before the activation point,
     /// we need to shut down for an upgrade.
     next_upgrade_activation_point: Option<ActivationPoint>,
+    last_known_block: Option<BlockHeader>,
     stop_for_upgrade: bool,
     /// Key for storing the linear chain sync state.
     state_key: Vec<u8>,
@@ -80,31 +83,35 @@ impl<I: Clone + PartialEq + 'static> LinearChainSync<I> {
         init_hash: Option<BlockHash>,
         genesis_validator_weights: BTreeMap<PublicKey, U512>,
         next_upgrade_activation_point: Option<ActivationPoint>,
+        last_known_block: Option<BlockHeader>,
     ) -> Result<Self, Err>
     where
         Err: From<prometheus::Error> + From<storage::Error>,
     {
         if let Some(state) = read_init_state(storage, chainspec)? {
-            Ok(LinearChainSync::from_state(
+            return Ok(LinearChainSync::from_state(
                 registry,
                 chainspec,
                 state,
                 next_upgrade_activation_point,
-            )?)
-        } else {
-            let state = init_hash.map_or(State::None, |init_hash| {
-                State::sync_trusted_hash(init_hash, genesis_validator_weights)
-            });
-            let state_key = create_state_key(&chainspec);
-            Ok(LinearChainSync {
-                peers: PeersState::new(),
-                state,
-                metrics: LinearChainSyncMetrics::new(registry)?,
-                next_upgrade_activation_point,
-                stop_for_upgrade: false,
-                state_key,
-            })
+                last_known_block,
+            )?);
         }
+
+        let state = init_hash.map_or(State::None, |init_hash| {
+            State::sync_trusted_hash(init_hash, genesis_validator_weights)
+        });
+
+        let state_key = create_state_key(&chainspec);
+        Ok(LinearChainSync {
+            peers: PeersState::new(),
+            state,
+            metrics: LinearChainSyncMetrics::new(registry)?,
+            next_upgrade_activation_point,
+            last_known_block,
+            stop_for_upgrade: false,
+            state_key,
+        })
     }
 
     /// Initialize `LinearChainSync` component from preloaded `State`.
@@ -113,6 +120,7 @@ impl<I: Clone + PartialEq + 'static> LinearChainSync<I> {
         chainspec: &Chainspec,
         state: State,
         next_upgrade_activation_point: Option<ActivationPoint>,
+        last_known_block: Option<BlockHeader>,
     ) -> Result<Self, prometheus::Error> {
         let state_key = create_state_key(chainspec);
         info!(?state, "reusing previous state");
@@ -121,6 +129,7 @@ impl<I: Clone + PartialEq + 'static> LinearChainSync<I> {
             state,
             metrics: LinearChainSyncMetrics::new(registry)?,
             next_upgrade_activation_point,
+            last_known_block,
             stop_for_upgrade: false,
             state_key,
         })
@@ -511,6 +520,7 @@ where
                         assert_eq!(*block.hash(), block_hash, "Block hash mismatch.");
                         trace!(%block_hash, "linear block found in the local storage.");
                         // TODO if block is a switch block, start downloading descendants.
+                        if block.header().is_switch_block() {}
                         self.block_downloaded(rng, effect_builder, &block)
                     }
                     BlockByHashResult::FromPeer(block, peer) => {
