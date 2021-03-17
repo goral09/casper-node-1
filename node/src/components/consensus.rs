@@ -133,7 +133,7 @@ pub enum Event<I> {
     /// An event instructing us to shutdown if the latest era received no votes.
     Shutdown,
     /// An event fired when the joiner reactor transitions into validator.
-    FinishedJoining(Timestamp),
+    FinishedJoining(Timestamp, Option<Box<BlockHeader>>),
     /// Got the result of checking for an upgrade activation point.
     GotUpgradeActivationPoint(ActivationPoint),
 }
@@ -231,7 +231,7 @@ impl<I: Debug> Display for Event<I> {
             ),
             Event::InitializeEras { .. } => write!(f, "Starting eras should be initialized"),
             Event::Shutdown => write!(f, "Shutdown if current era is inactive"),
-            Event::FinishedJoining(timestamp) => {
+            Event::FinishedJoining(timestamp, _) => {
                 write!(f, "The node finished joining the network at {}", timestamp)
             }
             Event::GotUpgradeActivationPoint(activation_point) => {
@@ -369,7 +369,9 @@ where
                 effects
             }
             Event::Shutdown => handling_es.shutdown_if_necessary(),
-            Event::FinishedJoining(timestamp) => handling_es.finished_joining(timestamp),
+            Event::FinishedJoining(timestamp, maybe_header) => {
+                handling_es.finished_joining(timestamp, maybe_header)
+            }
             Event::GotUpgradeActivationPoint(activation_point) => {
                 handling_es.got_upgrade_activation_point(activation_point)
             }

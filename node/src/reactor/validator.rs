@@ -465,6 +465,25 @@ impl reactor::Reactor for Reactor {
             chainspec_loader.chainspec().as_ref(),
         )?;
         let mut effects = reactor::wrap_effects(Event::BlockProposer, block_proposer_effects);
+
+        let now = Timestamp::now();
+        let maybe_latest_header = latest_block
+            .as_ref()
+            .map(|block| Box::new(block.header().clone()));
+        effects.extend(reactor::wrap_effects(
+            Event::Consensus,
+            effect_builder
+                .immediately()
+                .event(move |_| consensus::Event::FinishedJoining(now, maybe_latest_header)),
+        ));
+        // This is a workaround for dropping the Era Supervisor's timer event when transitioning
+        // from the joiner.
+        // TODO: Remove this once the consensus component is removed from the Joiner reactor.
+        effects.extend(reactor::wrap_effects(
+            Event::Consensus,
+            consensus.recreate_timers(effect_builder, rng),
+        ));
+
         let block_executor = BlockExecutor::new(
             chainspec_loader.initial_state_root_hash(),
             chainspec_loader.initial_block_header(),
@@ -506,13 +525,6 @@ impl reactor::Reactor for Reactor {
             effect_builder
                 .set_timeout(timer_duration.into())
                 .event(|_| consensus::Event::Shutdown),
-        ));
-
-        effects.extend(reactor::wrap_effects(
-            Event::Consensus,
-            effect_builder
-                .immediately()
-                .event(move |_| consensus::Event::FinishedJoining(now)),
         ));
 
         Ok((
