@@ -27,7 +27,10 @@ use crate::{
         highway_core::{
             active_validator::Effect as AvEffect,
             finality_detector::{FinalityDetector, FttExceeded},
-            highway::{Dependency, GetDepOutcome, Highway, Params, ValidVertex, Vertex},
+            highway::{
+                Dependency, GetDepOutcome, Highway, Params, PreValidatedVertex, ValidVertex,
+                Vertex, VertexError,
+            },
             state::{Observation, Panorama},
             validators::{ValidatorIndex, Validators},
         },
@@ -72,6 +75,7 @@ where
     /// A tracker for whether we are keeping up with the current round exponent or not.
     round_success_meter: RoundSuccessMeter<C>,
     synchronizer: Synchronizer<I, C>,
+    pvv_cache: HashMap<Dependency<C>, PreValidatedVertex<C>>,
     evidence_only: bool,
 }
 
@@ -185,6 +189,7 @@ impl<I: NodeIdT, C: Context + 'static> HighwayProtocol<I, C> {
                 config.request_latest_state_timeout,
                 instance_id,
             ),
+            pvv_cache: Default::default(),
             evidence_only: false,
         });
         (hw_proto, outcomes)
@@ -351,12 +356,14 @@ impl<I: NodeIdT, C: Context + 'static> HighwayProtocol<I, C> {
             error!(vertex = ?vv.inner(), "unexpected vertex in evidence-only mode");
             return vec![];
         }
+        let vertex_id = vv.inner().id();
         // Check whether we should change the round exponent.
         // It's important to do it before the vertex is added to the state - this way if the last
         // round has finished, we now have all the vertices from that round in the state, and no
         // newer ones.
         self.calculate_round_exponent(&vv);
         let av_effects = self.highway.add_valid_vertex(vv, now);
+        self.pvv_cache.remove(&vertex_id);
         self.process_av_effects(av_effects)
     }
 
@@ -405,6 +412,21 @@ impl<I: NodeIdT, C: Context + 'static> HighwayProtocol<I, C> {
             .last_finalized()
             .map_or(false, is_switch)
     }
+
+    /// Prevalidates the vertex but checks the cache for previously validated vertices.
+    /// Avoids multiplate validation of the same vertex.
+    fn pre_validate_vertex(
+        &mut self,
+        v: Vertex<C>,
+    ) -> Result<PreValidatedVertex<C>, (Vertex<C>, VertexError)> {
+        let id = v.id();
+        if let Some(prev_pvv) = self.pvv_cache.get(&id) {
+            return Ok(prev_pvv.clone());
+        }
+        let pvv = self.highway.pre_validate_vertex(v)?;
+        self.pvv_cache.insert(id, pvv.clone());
+        Ok(pvv)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -450,7 +472,10 @@ where
             Ok(HighwayMessage::NewVertex(v)) => {
                 // Keep track of whether the prevalidated vertex was from an equivocator
                 let v_id = v.id();
-                let pvv = match self.highway.pre_validate_vertex(v) {
+                if self.highway.has_dependency(&v_id) {
+                    return vec![];
+                }
+                let pvv = match self.pre_validate_vertex(v) {
                     Ok(pvv) => pvv,
                     Err((_, err)) => {
                         trace!("received an invalid vertex");
@@ -596,6 +621,7 @@ where
             }
             TIMER_ID_PURGE_VERTICES => {
                 self.synchronizer.purge_vertices(timestamp);
+                self.pvv_cache.clear();
                 let next_time = Timestamp::now() + self.synchronizer.pending_vertex_timeout();
                 vec![ProtocolOutcome::ScheduleTimer(next_time, timer_id)]
             }
