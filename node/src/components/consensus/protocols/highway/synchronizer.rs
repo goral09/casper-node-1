@@ -11,7 +11,10 @@ use tracing::info;
 use crate::{
     components::consensus::{
         consensus_protocol::ProtocolOutcome,
-        highway_core::highway::{Dependency, Highway, PreValidatedVertex, Vertex},
+        highway_core::{
+            highway::{Dependency, Highway, PreValidatedVertex, Vertex},
+            validators::ValidatorMap,
+        },
         traits::{Context, NodeIdT},
     },
     types::{TimeDiff, Timestamp},
@@ -161,6 +164,7 @@ where
     request_latest_state_timeout: TimeDiff,
     /// Instance ID of an era for which this synchronizer is constructed for.
     era_id: C::InstanceId,
+    oldest_seen_panorama: ValidatorMap<Option<u64>>,
     /// Boolean flag indicating whether we're synchronizing current era.
     pub(crate) current_era: bool,
 }
@@ -170,6 +174,7 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
     pub(crate) fn new(
         pending_vertex_timeout: TimeDiff,
         request_latest_state_timeout: TimeDiff,
+        validator_len: usize,
         era_id: C::InstanceId,
     ) -> Self {
         Synchronizer {
@@ -178,6 +183,9 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
             vertices_to_be_added: Default::default(),
             pending_vertex_timeout,
             request_latest_state_timeout,
+            oldest_seen_panorama: ValidatorMap::from(
+                iter::repeat(None).take(validator_len).collect_vec(),
+            ),
             era_id,
             current_era: true,
         }
@@ -218,6 +226,7 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
             vertices_to_be_added = self.vertices_to_be_added_len(),
             "synchronizer queue lengths"
         );
+        info!(oldest_panorama=%self.oldest_seen_panorama, "oldest seen unit per validator");
     }
 
     /// Store a (pre-validated) vertex which will be added later.  This creates a timer to be sent
@@ -271,8 +280,20 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
         pvv: PreValidatedVertex<C>,
         now: Timestamp,
     ) -> ProtocolOutcomes<I, C> {
+        self.update_last_seen(&pvv);
         let pv = PendingVertex::new(sender, pvv, now);
         self.schedule_add_vertices(iter::once(pv))
+    }
+
+    fn update_last_seen(&mut self, pvv: &PreValidatedVertex<C>) {
+        let v = pvv.inner();
+        match (v.creator(), v.unit_seq_number()) {
+            (Some(v_id), Some(seq_num)) => {
+                let prev_seq_num = self.oldest_seen_panorama[v_id].unwrap_or(u64::MAX);
+                self.oldest_seen_panorama[v_id] = Some(prev_seq_num.min(seq_num));
+            }
+            _ => return,
+        }
     }
 
     /// Moves all vertices whose known missing dependency is now satisfied into the
