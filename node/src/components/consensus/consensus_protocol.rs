@@ -128,9 +128,6 @@ pub(crate) trait ConsensusProtocol<I, C: Context>: Send {
     /// Handles an incoming message (like NewUnit, RequestDependency).
     fn handle_message(&mut self, sender: I, msg: Vec<u8>) -> ProtocolOutcomes<I, C>;
 
-    /// Handles new connection to a peer.
-    fn handle_new_peer(&mut self, peer_id: I) -> ProtocolOutcomes<I, C>;
-
     /// Triggers consensus' timer.
     fn handle_timer(&mut self, timestamp: Timestamp, timer_id: TimerId) -> ProtocolOutcomes<I, C>;
 

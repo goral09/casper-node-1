@@ -771,12 +771,6 @@ where
         }
     }
 
-    pub(super) fn handle_new_peer(&mut self, peer_id: I) -> Effects<Event<I>> {
-        self.delegate_to_era(self.era_supervisor.current_era, move |consensus| {
-            consensus.handle_new_peer(peer_id)
-        })
-    }
-
     pub(super) fn handle_new_proto_block(
         &mut self,
         era_id: EraId,

@@ -577,15 +577,6 @@ where
         }
     }
 
-    fn handle_new_peer(&mut self, peer_id: I) -> ProtocolOutcomes<I, C> {
-        trace!(?peer_id, "connected to a new peer");
-        let msg = HighwayMessage::LatestStateRequest(self.highway.state().panorama().clone());
-        vec![ProtocolOutcome::CreatedTargetedMessage(
-            msg.serialize(),
-            peer_id,
-        )]
-    }
-
     fn handle_timer(&mut self, timestamp: Timestamp, timer_id: TimerId) -> ProtocolOutcomes<I, C> {
         match timer_id {
             TIMER_ID_ACTIVE_VALIDATOR => {
