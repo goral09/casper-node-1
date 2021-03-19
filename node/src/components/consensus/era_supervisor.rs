@@ -584,6 +584,13 @@ where
         }
 
         self.is_initialized = true;
+        let active_era_outcomes = self.active_eras[&self.current_era]
+            .consensus
+            .handle_is_current();
+        result_map
+            .entry(self.current_era)
+            .or_default()
+            .extend(active_era_outcomes);
         self.next_block_height = self.active_eras[&self.current_era].start_height;
         result_map
     }
@@ -942,7 +949,7 @@ where
             .chain(&newly_slashed)
             .cloned()
             .collect();
-        let outcomes = self.era_supervisor.new_era(
+        let mut outcomes = self.era_supervisor.new_era(
             era_id,
             Timestamp::now(), // TODO: This should be passed in.
             next_era_validators_weights.clone(),
@@ -951,6 +958,11 @@ where
             seed,
             switch_block.header().timestamp(),
             switch_block.height() + 1,
+        );
+        outcomes.extend(
+            self.era_supervisor.active_eras[&era_id]
+                .consensus
+                .handle_is_current(),
         );
         let mut effects = self.handle_consensus_outcomes(era_id, outcomes);
         effects.extend(
