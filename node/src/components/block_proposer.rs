@@ -94,7 +94,7 @@ impl BlockProposer {
     where
         REv: From<Event> + From<StorageRequest> + From<StateStoreRequest> + Send + 'static,
     {
-        debug!(%next_finalized_block, "creating block proposer");
+        info!(%next_finalized_block, "creating block proposer");
         // load the state from storage or use a fresh instance if loading fails.
         let state_key = deploy_sets::create_storage_key(chainspec);
         let effects = effect_builder
@@ -225,7 +225,7 @@ impl BlockProposerReady {
         match event {
             Event::Request(BlockProposerRequest::RequestProtoBlock(request)) => {
                 if request.next_finalized > self.sets.next_finalized {
-                    debug!(
+                    warn!(
                         request_next_finalized = %request.next_finalized,
                         self_next_finalized = %self.sets.next_finalized,
                         "received request before finalization announcement"
@@ -271,7 +271,7 @@ impl BlockProposerReady {
                 deploys.extend(transfers);
 
                 if height > self.sets.next_finalized {
-                    debug!(
+                    warn!(
                         %height,
                         next_finalized = %self.sets.next_finalized,
                         "received finalized blocks out of order; queueing"
