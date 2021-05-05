@@ -343,28 +343,10 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
                 Some(pv) => pv,
             };
             if let Some(dep) = highway.missing_dependency(pv.pvv()) {
-                // Find the first dependency that `pv` needs that we haven't synchronized yet
-                // and request it from the sender of `pv`. Since it relies on it, it should have
-                // it as well.
-                let transitive_dependency = self.find_transitive_dependency(dep.clone());
-                if self
-                    .vertices_no_deps
-                    .contains_dependency(&transitive_dependency)
-                {
-                    // `dep` is already downloaded and waiting in the synchronizer queue to be
-                    // added, we don't have to request it again. Add the `pv`
-                    // back to the queue so that it can be retried later. `dep` does not wait for
-                    // any of the dependencies currently so it should be retried soon.
-                    self.add_missing_dependency(dep.clone(), pv);
-                    continue;
-                }
                 // We are still missing a dependency. Store the vertex in the map and request
                 // the dependency from the sender.
                 let sender = pv.sender().clone();
                 let time_received = pv.time_received;
-                // Make `pv` depend on the direct dependency `dep` and not `transitive_dependency`
-                // since there's a higher chance of adding `pv` to the protocol
-                // state after `dep` is added, rather than `transitive_dependency`.
                 self.add_missing_dependency(dep.clone(), pv);
                 // If we already have the dependency and it is a proposal that is currently being
                 // handled by the block validator, and this sender is already known as a source,
@@ -372,7 +354,7 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
                 if pending_values
                     .values()
                     .flatten()
-                    .any(|(vv, s)| vv.inner().id() == transitive_dependency && s == &sender)
+                    .any(|(vv, s)| vv.inner().id() == dep && s == &sender)
                 {
                     continue;
                 }
@@ -382,10 +364,10 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
                 if let Some((vv, _)) = pending_values
                     .values()
                     .flatten()
-                    .find(|(vv, _)| vv.inner().id() == transitive_dependency)
+                    .find(|(vv, _)| vv.inner().id() == dep)
                 {
                     info!(
-                        dependency = ?transitive_dependency, %sender,
+                        dependency = ?dep, %sender,
                         "adding sender as a source for proposal"
                     );
                     let dep_pv = PendingVertex::new(sender, vv.clone().into(), time_received);
@@ -396,20 +378,9 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
                     }
                     return (Some(dep_pv), outcomes);
                 }
-                // If we have already requested the dependency from this peer, or from the maximum
-                // number of peers, do nothing.
-                let entry = self
-                    .requests_sent
-                    .entry(transitive_dependency.clone())
-                    .or_default();
-                if entry.len() >= self.config.max_requests_for_vertex
-                    || !entry.insert(sender.clone())
-                {
-                    continue;
-                }
                 // Otherwise request the missing dependency from the sender.
-                info!(dependency = ?transitive_dependency, %sender, "requesting dependency");
-                let ser_msg = HighwayMessage::RequestDependency(transitive_dependency).serialize();
+                info!(dependency = ?dep, %sender, "requesting dependency");
+                let ser_msg = HighwayMessage::RequestDependency(dep).serialize();
                 outcomes.push(ProtocolOutcome::CreatedTargetedMessage(ser_msg, sender));
                 continue;
             }
@@ -424,6 +395,7 @@ impl<I: NodeIdT, C: Context + 'static> Synchronizer<I, C> {
 
     // Finds the highest missing dependency (i.e. one that we are waiting to be downloaded) and
     // returns it, if any.
+    #[allow(unused)]
     fn find_transitive_dependency(&self, mut missing_dependency: Dependency<C>) -> Dependency<C> {
         // If `missing_dependency` is already downloaded and waiting for its dependency to be
         // resolved, we will follow that dependency until we find "the bottom" of the
